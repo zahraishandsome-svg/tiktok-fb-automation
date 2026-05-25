@@ -1,0 +1,12 @@
+channels:
+  - id: page_1
+    tiktok_username: "tiktok_handle_without_at"
+    facebook_page_name: "My Facebook Page Name"
+    credentials_file: "credentials/page_1_credentials.json"
+    token_file: "tokens/page_1_token.json"
+    videos_per_day: 2
+    description_footer: ""
+    default_tags: []
+    enabled: true
+    max_retry_days: 3
+    shorts_max_seconds: 180

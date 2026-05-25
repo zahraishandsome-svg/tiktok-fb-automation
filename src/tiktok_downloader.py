@@ -1,0 +1,144 @@
+"""
+TikTok scraping and downloading via yt-dlp.
+Watermark removal is handled by preferring the 'download_addr' format over 'play_addr'.
+Never raises — returns None on failure so channel_runner can decide retry logic.
+"""
+
+import logging
+import shutil
+from pathlib import Path
+from typing import Optional, List, Dict, Any
+
+import yt_dlp
+
+logger = logging.getLogger(__name__)
+
+_WATERMARK_FREE_FORMAT = (
+    "bestvideo[format_id^=download][ext=mp4]+bestaudio/bestvideo[ext=mp4]+bestaudio/best"
+)
+
+
+def get_profile_videos(tiktok_username: str) -> List[Dict[str, Any]]:
+    """
+    Fetch video metadata from a public TikTok profile.
+    Returns list of video dicts sorted newest-first.
+    """
+    url = f"https://www.tiktok.com/@{tiktok_username}"
+    ydl_opts = {
+        "quiet": True,
+        "no_warnings": True,
+        "extract_flat": "in_playlist",
+        "ignoreerrors": True,
+        "skip_download": True,
+    }
+
+    logger.info("Fetching video list from TikTok: @%s", tiktok_username)
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+    except Exception as exc:
+        logger.error("yt-dlp failed to list @%s: %s", tiktok_username, exc)
+        return []
+
+    if not info or "entries" not in info:
+        logger.warning("No entries returned for @%s", tiktok_username)
+        return []
+
+    videos = []
+    for entry in info.get("entries") or []:
+        if not entry:
+            continue
+        videos.append({
+            "id": entry.get("id"),
+            "url": entry.get("url") or entry.get("webpage_url"),
+            "title": _clean_title(entry.get("title") or ""),
+            "description": entry.get("description") or "",
+            "timestamp": entry.get("timestamp"),
+            "duration": entry.get("duration"),
+            "width": entry.get("width"),
+            "height": entry.get("height"),
+        })
+
+    videos.sort(key=lambda v: v.get("timestamp") or 0, reverse=True)
+    logger.info("Found %d videos on @%s profile", len(videos), tiktok_username)
+    return videos
+
+
+def download_video(video_url: str, video_id: str, output_dir: Path) -> Optional[Path]:
+    """
+    Download one TikTok video without watermark.
+    Returns the local file path on success, None on failure.
+    """
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_template = str(output_dir / f"{video_id}.%(ext)s")
+
+    ydl_opts = {
+        "format": _WATERMARK_FREE_FORMAT,
+        "outtmpl": output_template,
+        "merge_output_format": "mp4",
+        "quiet": False,
+        "no_warnings": False,
+        "retries": 3,
+        "fragment_retries": 5,
+        "socket_timeout": 30,
+        "ignoreerrors": False,
+        "geo_bypass": True,
+    }
+
+    logger.info("Downloading TikTok video %s", video_id)
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(video_url, download=True)
+            if not info:
+                logger.error("yt-dlp returned no info for %s", video_id)
+                return None
+    except yt_dlp.utils.DownloadError as exc:
+        logger.error("Download failed for %s: %s", video_id, exc)
+        return None
+    except Exception as exc:
+        logger.error("Unexpected error downloading %s: %s", video_id, exc)
+        return None
+
+    for ext in ("mp4", "webm", "mkv"):
+        candidate = output_dir / f"{video_id}.{ext}"
+        if candidate.exists() and candidate.stat().st_size > 0:
+            logger.info("Downloaded: %s (%.1f MB)", candidate.name,
+                        candidate.stat().st_size / 1_048_576)
+            return candidate
+
+    logger.error("Download reported success but no output file found for %s", video_id)
+    return None
+
+
+def is_short_video(duration: Optional[float], width: Optional[int],
+                   height: Optional[int], max_seconds: int = 180) -> bool:
+    """True if video qualifies as a Reel (vertical + under max_seconds)."""
+    vertical = (height or 0) > (width or 0)
+    short_enough = (duration or 999) <= max_seconds
+    return vertical and short_enough
+
+
+def cleanup_download(file_path: Path) -> None:
+    try:
+        if file_path.exists():
+            file_path.unlink()
+            logger.debug("Deleted local file: %s", file_path)
+    except Exception as exc:
+        logger.warning("Could not delete %s: %s", file_path, exc)
+
+
+def cleanup_stale_downloads(output_dir: Path, max_age_days: int = 7) -> None:
+    from datetime import datetime, timedelta
+    cutoff = datetime.utcnow() - timedelta(days=max_age_days)
+    if not output_dir.exists():
+        return
+    for f in output_dir.iterdir():
+        if f.suffix in (".mp4", ".webm", ".mkv"):
+            modified = datetime.utcfromtimestamp(f.stat().st_mtime)
+            if modified < cutoff:
+                f.unlink()
+                logger.info("Purged stale download: %s", f.name)
+
+
+def _clean_title(title: str) -> str:
+    return title.strip()
