@@ -22,6 +22,8 @@ jobs:
   upload:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    permissions:
+      contents: write
 
     steps:
       - uses: actions/checkout@v4
@@ -71,6 +73,27 @@ jobs:
         with:
           path: data/automation.db
           key: fb-automation-db-${{ github.run_id }}
+
+      - name: Commit DB to repo
+        if: always()
+        run: |
+          if [ ! -f data/automation.db ]; then
+            echo "No DB file found — skipping commit"
+            exit 0
+          fi
+          cp data/automation.db /tmp/automation_new.db
+          git fetch origin main
+          git checkout -B main origin/main
+          cp /tmp/automation_new.db data/automation.db
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -f data/automation.db
+          if ! git diff --staged --quiet; then
+            git commit -m "chore: update automation.db [skip ci]"
+            git push origin main
+          else
+            echo "No DB changes to commit"
+          fi
 
       - name: Upload logs
         if: always()

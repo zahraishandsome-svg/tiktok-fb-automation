@@ -5,7 +5,7 @@ Returns a result dict so orchestrator can aggregate and notify.
 """
 
 import logging
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Dict, Any, Optional
 
@@ -23,6 +23,10 @@ logger = logging.getLogger(__name__)
 
 PROJECT_ROOT = Path(__file__).parent.parent
 DOWNLOADS_DIR = PROJECT_ROOT / "downloads"
+
+
+class TikTokUnreachableError(Exception):
+    """Raised when the TikTok profile fetch fails after all retries."""
 
 
 def run_channel(channel: Dict[str, Any], slot: int, dry_run: bool = False) -> Dict[str, Any]:
@@ -142,6 +146,13 @@ def run_channel(channel: Dict[str, Any], slot: int, dry_run: bool = False) -> Di
             result["status"] = "failed"
             result["error"] = "Upload returned no video ID"
 
+    except TikTokUnreachableError as exc:
+        error_msg = str(exc)
+        logger.error("[%s] %s", channel_id, error_msg)
+        db.finish_run(run_id, "failed", error_message=error_msg)
+        result["status"] = "failed"
+        result["error"] = error_msg
+
     except Exception as exc:
         error_msg = f"Unexpected error: {exc}"
         logger.exception("[%s] %s", channel_id, error_msg)
@@ -169,6 +180,10 @@ def _pick_next_video(channel: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         }
 
     videos = get_profile_videos(channel["tiktok_username"])
+    if videos is None:
+        raise TikTokUnreachableError(
+            f"TikTok profile @{channel['tiktok_username']} is unreachable after retries"
+        )
     if not videos:
         return None
 

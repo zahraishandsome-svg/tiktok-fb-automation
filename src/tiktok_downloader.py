@@ -6,6 +6,7 @@ Never raises — returns None on failure so channel_runner can decide retry logi
 
 import logging
 import shutil
+import time
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 
@@ -17,11 +18,18 @@ _WATERMARK_FREE_FORMAT = (
     "bestvideo[format_id^=download][ext=mp4]+bestaudio/bestvideo[ext=mp4]+bestaudio/best"
 )
 
+_FETCH_RETRIES = 3
+_FETCH_RETRY_BASE_WAIT = 2   # seconds, doubles each attempt
 
-def get_profile_videos(tiktok_username: str) -> List[Dict[str, Any]]:
+
+def get_profile_videos(tiktok_username: str) -> Optional[List[Dict[str, Any]]]:
     """
     Fetch video metadata from a public TikTok profile.
-    Returns list of video dicts sorted newest-first.
+    Returns:
+      - List of video dicts sorted newest-first on success (may be empty if no videos)
+      - None if the profile could not be fetched after all retries (network/TikTok error)
+        — callers must treat None as an alert-worthy failure, not just "no content"
+    Does NOT download — just lists metadata.
     """
     url = f"https://www.tiktok.com/@{tiktok_username}"
     ydl_opts = {
@@ -33,16 +41,31 @@ def get_profile_videos(tiktok_username: str) -> List[Dict[str, Any]]:
     }
 
     logger.info("Fetching video list from TikTok: @%s", tiktok_username)
-    try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=False)
-    except Exception as exc:
-        logger.error("yt-dlp failed to list @%s: %s", tiktok_username, exc)
-        return []
+    info = None
+    for attempt in range(1, _FETCH_RETRIES + 1):
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(url, download=False)
+            break   # success — exit retry loop
+        except Exception as exc:
+            if attempt < _FETCH_RETRIES:
+                wait = _FETCH_RETRY_BASE_WAIT ** attempt
+                logger.warning(
+                    "TikTok fetch attempt %d/%d failed for @%s, retrying in %ds: %s",
+                    attempt, _FETCH_RETRIES, tiktok_username, wait, exc,
+                )
+                time.sleep(wait)
+            else:
+                logger.error(
+                    "TikTok fetch failed for @%s after %d attempts — profile may be "
+                    "blocked or unreachable: %s",
+                    tiktok_username, _FETCH_RETRIES, exc,
+                )
+                return None   # ← distinct from empty profile
 
     if not info or "entries" not in info:
-        logger.warning("No entries returned for @%s", tiktok_username)
-        return []
+        logger.warning("No entries returned for @%s — profile is empty or private", tiktok_username)
+        return []   # ← accessible but empty
 
     videos = []
     for entry in info.get("entries") or []:

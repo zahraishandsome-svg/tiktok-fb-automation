@@ -8,5 +8,5 @@ channels:
     description_footer: ""
     default_tags: []
     enabled: true
-    max_retry_days: 3
+    max_retry_days: 7
     shorts_max_seconds: 180

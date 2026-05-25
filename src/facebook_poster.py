@@ -5,6 +5,7 @@ Handles token management, resumable uploads, Reels vs regular video, and process
 
 import json
 import logging
+import random
 import time
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -21,6 +22,32 @@ CHUNK_SIZE = 10 * 1024 * 1024   # 10 MB chunks for resumable upload
 TOKEN_EXPIRY_WARNING_DAYS = 7
 PROCESSING_POLL_INTERVAL = 10   # seconds between status checks
 PROCESSING_TIMEOUT = 300        # seconds before giving up on processing check
+
+_TRANSIENT_STATUS_CODES = {500, 502, 503, 504}
+_MAX_UPLOAD_RETRIES = 5
+
+
+def _post_with_retry(url: str, *, data: dict, files: dict = None,
+                     timeout: int = 300) -> requests.Response:
+    """
+    POST with exponential backoff on transient 5xx errors.
+    Raises requests.RequestException on permanent failure.
+    """
+    for attempt in range(1, _MAX_UPLOAD_RETRIES + 1):
+        resp = requests.post(url, data=data, files=files, timeout=timeout)
+        if resp.status_code not in _TRANSIENT_STATUS_CODES:
+            resp.raise_for_status()
+            return resp
+        if attempt < _MAX_UPLOAD_RETRIES:
+            wait = min(60, (2 ** attempt) + random.uniform(0, 1))
+            logger.warning(
+                "Facebook API transient %d — retry %d/%d in %.1fs",
+                resp.status_code, attempt, _MAX_UPLOAD_RETRIES, wait,
+            )
+            time.sleep(wait)
+        else:
+            resp.raise_for_status()   # raises HTTPError
+    return resp  # unreachable, satisfies type checker
 
 
 # ── Token management ──────────────────────────────────────────────────────────
@@ -123,13 +150,12 @@ def _upload_simple(page_id: str, token: str, video_path: Path,
     url = f"{GRAPH_VIDEO_URL}/{page_id}/videos"
     try:
         with open(video_path, "rb") as f:
-            resp = requests.post(
+            resp = _post_with_retry(
                 url,
                 data={"title": title, "description": description, "access_token": token},
                 files={"source": f},
                 timeout=300,
             )
-        resp.raise_for_status()
         data = resp.json()
         video_id = data.get("id")
         if video_id:
@@ -148,7 +174,7 @@ def _upload_resumable(page_id: str, token: str, video_path: Path,
 
     # Step 1: Initialize
     try:
-        resp = requests.post(
+        resp = _post_with_retry(
             base_url,
             data={
                 "upload_phase": "start",
@@ -177,7 +203,7 @@ def _upload_resumable(page_id: str, token: str, video_path: Path,
                 break
 
             try:
-                resp = requests.post(
+                resp = _post_with_retry(
                     base_url,
                     data={
                         "upload_phase": "transfer",
@@ -205,7 +231,7 @@ def _upload_resumable(page_id: str, token: str, video_path: Path,
 
     # Step 3: Finish
     try:
-        resp = requests.post(
+        resp = _post_with_retry(
             base_url,
             data={
                 "upload_phase": "finish",
@@ -236,7 +262,7 @@ def _upload_reel(page_id: str, token: str, video_path: Path,
 
     # Initialize reel upload
     try:
-        resp = requests.post(
+        resp = _post_with_retry(
             url,
             data={
                 "upload_phase": "start",
@@ -261,7 +287,7 @@ def _upload_reel(page_id: str, token: str, video_path: Path,
         video_data = f.read(end_offset - start_offset)
 
     try:
-        resp = requests.post(
+        _post_with_retry(
             url,
             data={
                 "upload_phase": "transfer",
@@ -272,14 +298,13 @@ def _upload_reel(page_id: str, token: str, video_path: Path,
             files={"video_file_chunk": video_data},
             timeout=300,
         )
-        resp.raise_for_status()
     except requests.RequestException as exc:
         logger.error("Reel upload transfer failed: %s", exc)
         return None
 
     # Finish and publish
     try:
-        resp = requests.post(
+        resp = _post_with_retry(
             url,
             data={
                 "upload_phase": "finish",

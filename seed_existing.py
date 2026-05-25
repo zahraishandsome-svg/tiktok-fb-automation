@@ -86,6 +86,9 @@ def main() -> None:
 
     print(f"Fetching TikTok profile: @{channel['tiktok_username']}...")
     tiktok_videos = get_profile_videos(channel["tiktok_username"])
+    if tiktok_videos is None:
+        print(f"ERROR: Could not fetch TikTok profile @{channel['tiktok_username']} — network error or profile unreachable")
+        sys.exit(1)
     print(f"  Found {len(tiktok_videos)} videos on TikTok")
 
     matched = 0
