@@ -123,13 +123,19 @@ def run_channel(channel: Dict[str, Any], slot: int, dry_run: bool = False) -> Di
         )
 
         if fb_video_id:
-            db.mark_uploaded(channel_id, video["id"], fb_video_id)
+            if not dry_run:
+                db.mark_uploaded(channel_id, video["id"], fb_video_id)
+                db.finish_run(run_id, "success", videos_uploaded=1)
+            else:
+                # Dry run: do NOT write to DB so real runs aren't blocked
+                db.finish_run(run_id, "dry_run", videos_uploaded=0)
+                logger.info("[%s] [DRY RUN] Would have uploaded: https://www.facebook.com/video/%s", channel_id, fb_video_id)
             cleanup_download(local_file)
-            db.finish_run(run_id, "success", videos_uploaded=1)
             result["status"] = "success"
             result["video_uploaded"] = title
             result["fb_url"] = f"https://www.facebook.com/video/{fb_video_id}"
-            logger.info("[%s] ✓ Uploaded: %s", channel_id, result["fb_url"])
+            if not dry_run:
+                logger.info("[%s] ✓ Uploaded: %s", channel_id, result["fb_url"])
         else:
             _handle_failure(channel, video, "Upload returned no video ID")
             db.finish_run(run_id, "failed", error_message="Upload failed")
