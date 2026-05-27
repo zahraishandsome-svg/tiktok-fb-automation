@@ -47,6 +47,9 @@ def get_fb_page_videos(page_id: str, token: str) -> list:
     }
     while url:
         resp = requests.get(url, params=params, timeout=30)
+        if resp.status_code == 500:
+            print(f"  FB API 500 on pagination — using {len(videos)} videos fetched so far")
+            break
         resp.raise_for_status()
         data = resp.json()
         videos.extend(data.get("data", []))
@@ -98,7 +101,7 @@ def main() -> None:
         norm_title = normalize(video.get("title") or "")
         if norm_title in fb_titles:
             fb_video = fb_titles[norm_title]
-            print(f"  MATCH: '{video['title']}' → FB video {fb_video.get('id')}")
+            print(f"  MATCH: '{video['title']}' -> FB video {fb_video.get('id')}")
             matched += 1
 
             if not args.dry_run:
