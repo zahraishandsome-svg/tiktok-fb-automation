@@ -258,13 +258,36 @@ def get_todays_run_summary() -> List[Dict]:
     all_rows: List[Dict] = []
     query = """
         SELECT r.channel_id, r.slot, r.status, r.videos_uploaded, r.error_message,
-               p.fb_video_id, p.tiktok_title
+               (
+                   SELECT p.fb_video_id
+                   FROM posted_videos p
+                   WHERE p.channel_id = r.channel_id
+                     AND p.status = 'uploaded'
+                     AND p.posted_at >= r.started_at
+                     AND p.posted_at <= COALESCE(r.completed_at, datetime('now'))
+                   ORDER BY p.posted_at DESC
+                   LIMIT 1
+               ) AS fb_video_id,
+               (
+                   SELECT p.tiktok_title
+                   FROM posted_videos p
+                   WHERE p.channel_id = r.channel_id
+                     AND p.status = 'uploaded'
+                     AND p.posted_at >= r.started_at
+                     AND p.posted_at <= COALESCE(r.completed_at, datetime('now'))
+                   ORDER BY p.posted_at DESC
+                   LIMIT 1
+               ) AS tiktok_title
         FROM runs r
-        LEFT JOIN posted_videos p
-            ON p.channel_id = r.channel_id
-            AND p.status = 'uploaded'
-            AND date(p.posted_at) = date('now')
         WHERE r.run_date = date('now')
+          AND r.status != 'running'
+          AND r.id = (
+              SELECT MAX(r2.id) FROM runs r2
+              WHERE r2.channel_id = r.channel_id
+                AND r2.slot = r.slot
+                AND r2.run_date = r.run_date
+                AND r2.status != 'running'
+          )
         ORDER BY r.channel_id, r.slot
     """
     for db_path in db_paths:
