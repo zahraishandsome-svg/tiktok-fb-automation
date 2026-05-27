@@ -2,7 +2,7 @@ name: Upload Slot 2 (10PM PKT)
 
 on:
   schedule:
-    - cron: "0 17 * * *"   # 17:00 UTC = 10:00 PM PKT
+    - cron: "0 16 * * *"   # 16:00 UTC = 9:00 PM PKT — uploads 1h early, video scheduled to go PUBLIC at 17:00 UTC (10:00 PM PKT)
   workflow_dispatch:
     inputs:
       channel:
@@ -82,7 +82,7 @@ jobs:
 
       - name: Save DB cache
         if: always()
-        uses: actions/cache/save@v4
+        uses: actions/cache@v4
         with:
           path: data/automation.db
           key: fb-automation-db-${{ github.run_id }}

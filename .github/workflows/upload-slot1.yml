@@ -2,7 +2,7 @@ name: Upload Slot 1 (8PM PKT)
 
 on:
   schedule:
-    - cron: "0 15 * * *"   # 15:00 UTC = 8:00 PM PKT
+    - cron: "0 14 * * *"   # 14:00 UTC = 7:00 PM PKT — uploads 1h early, video scheduled to go PUBLIC at 15:00 UTC (8:00 PM PKT)
   workflow_dispatch:
     inputs:
       channel:
