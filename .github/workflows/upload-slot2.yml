@@ -1,8 +1,8 @@
-name: Upload Slot 2 (1AM PKT)
+name: Upload Slot 2 (10PM PKT)
 
 on:
   schedule:
-    - cron: "0 20 * * *"   # 20:00 UTC = 1:00 AM PKT
+    - cron: "0 17 * * *"   # 17:00 UTC = 10:00 PM PKT
   workflow_dispatch:
     inputs:
       channel:

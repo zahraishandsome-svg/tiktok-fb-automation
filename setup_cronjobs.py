@@ -14,7 +14,7 @@ REPO = "zahraishandsome-svg/tiktok-fb-automation"
 
 JOBS = [
     ("TikTok-FB Slot1 (8PM PKT)", "upload-slot1.yml", 15, 0),
-    ("TikTok-FB Slot2 (1AM PKT)", "upload-slot2.yml", 20, 0),
+    ("TikTok-FB Slot2 (10PM PKT)", "upload-slot2.yml", 17, 0),
 ]
 
 
