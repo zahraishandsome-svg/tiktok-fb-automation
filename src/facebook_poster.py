@@ -185,7 +185,9 @@ def _upload_resumable(page_id: str, token: str, video_path: Path,
         )
         resp.raise_for_status()
         init_data = resp.json()
+        logger.debug("Resumable upload init response: %s", init_data)
         upload_session_id = init_data.get("upload_session_id")
+        video_id = init_data.get("video_id")   # FB returns video_id at start phase
         start_offset = int(init_data.get("start_offset", 0))
         end_offset = int(init_data.get("end_offset", CHUNK_SIZE))
     except (requests.RequestException, ValueError, KeyError) as exc:
@@ -244,10 +246,15 @@ def _upload_resumable(page_id: str, token: str, video_path: Path,
         )
         resp.raise_for_status()
         finish_data = resp.json()
-        video_id = finish_data.get("video_id") or finish_data.get("id")
+        logger.debug("Resumable upload finish response: %s", finish_data)
+        # video_id comes from the init phase; finish returns {"success": true}
+        if not video_id:
+            video_id = finish_data.get("video_id") or finish_data.get("id")
         if video_id:
             logger.info("Resumable upload complete. FB video ID: %s", video_id)
             _wait_for_processing(video_id, token)
+        else:
+            logger.error("Resumable upload: no video_id in init or finish response. finish=%s", finish_data)
         return video_id
     except requests.RequestException as exc:
         logger.error("Resumable upload finish failed: %s", exc)
