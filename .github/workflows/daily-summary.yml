@@ -35,8 +35,6 @@ jobs:
           key: fb-automation-db-page_1-${{ github.sha }}-${{ github.run_id }}
           restore-keys: |
             fb-automation-db-page_1-${{ github.sha }}-
-            fb-automation-db-page_1-
-
       - name: Write .env
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
