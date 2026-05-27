@@ -13,7 +13,7 @@ from . import db
 from .config import load_credentials, load_token
 from .tiktok_downloader import (
     get_profile_videos, download_video, is_short_video,
-    cleanup_download, cleanup_stale_downloads,
+    cleanup_download, cleanup_stale_downloads, _PROFILE_BATCH,
 )
 from .facebook_poster import (
     upload_video, check_token_expiry, TOKEN_EXPIRY_WARNING_DAYS,
@@ -196,28 +196,46 @@ def _pick_next_video(channel: Dict[str, Any], slot: int) -> Optional[Dict[str, A
             "timestamp": retries[0]["tiktok_timestamp"],
         }
 
-    # Fetch fresh profile and find newest unposted
-    videos = get_profile_videos(channel["tiktok_username"])
-    if videos is None:
+    # Fetch first batch (fast path — newest _PROFILE_BATCH videos only)
+    raw_batch = get_profile_videos(channel["tiktok_username"])  # default end=_PROFILE_BATCH
+    if raw_batch is None:
         raise TikTokUnreachableError(
             f"TikTok profile @{channel['tiktok_username']} is unreachable after retries"
         )
-    if not videos:
+    if not raw_batch:
         return None
 
-    # Apply upload-date filter
-    if min_ts is not None:
-        before = len(videos)
-        videos = [v for v in videos if (v.get("timestamp") or 0) >= min_ts]
-        filtered = before - len(videos)
-        if filtered:
-            logger.info(
-                "[%s] Filtered %d video(s) older than min_upload_date (%s)",
-                channel_id, filtered, channel["min_upload_date"],
-            )
-
     already_posted = db.get_posted_video_ids(channel_id)
-    eligible = [v for v in videos if v["id"] not in already_posted]
+
+    def _filter(vids):
+        if min_ts is not None:
+            vids = [v for v in vids if (v.get("timestamp") or 0) >= min_ts]
+        return [v for v in vids if v["id"] not in already_posted]
+
+    eligible = _filter(raw_batch)
+
+    # If all videos in the batch are already posted and we got a full batch,
+    # there may be older unposted videos — fall back to fetching the full profile.
+    if not eligible and len(raw_batch) >= _PROFILE_BATCH:
+        logger.info(
+            "[%s] All %d videos in first batch already posted — fetching full profile",
+            channel_id, _PROFILE_BATCH,
+        )
+        all_videos = get_profile_videos(channel["tiktok_username"], end=None)
+        if all_videos is None:
+            raise TikTokUnreachableError(
+                f"TikTok profile @{channel['tiktok_username']} is unreachable after retries"
+            )
+        if min_ts is not None:
+            before = len(all_videos)
+            all_videos = [v for v in all_videos if (v.get("timestamp") or 0) >= min_ts]
+            filtered = before - len(all_videos)
+            if filtered:
+                logger.info(
+                    "[%s] Filtered %d video(s) older than min_upload_date (%s)",
+                    channel_id, filtered, channel["min_upload_date"],
+                )
+        eligible = [v for v in all_videos if v["id"] not in already_posted]
 
     # Slot throttle: skip slot 1 when backlog is too small so the remaining
     # video(s) are preserved for slot 2.
