@@ -1,7 +1,7 @@
 channels:
   - id: page_1
-    tiktok_username: "tiktok_handle_without_at"
-    facebook_page_name: "My Facebook Page Name"
+    tiktok_username: "ellaboyett"
+    facebook_page_name: "Ella Boyett"
     credentials_file: "credentials/page_1_credentials.json"
     token_file: "tokens/page_1_token.json"
     videos_per_day: 2

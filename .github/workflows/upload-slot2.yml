@@ -52,11 +52,24 @@ jobs:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
         run: |
           mkdir -p credentials tokens
-          echo "$PAGE_1_CREDENTIALS" | base64 -d > credentials/page_1_credentials.json
-          echo "$PAGE_1_TOKEN"       | base64 -d > tokens/page_1_token.json
+          if [ -n "$PAGE_1_CREDENTIALS" ]; then
+            echo "$PAGE_1_CREDENTIALS" | base64 -d > credentials/page_1_credentials.json
+          fi
+          if [ -n "$PAGE_1_TOKEN" ]; then
+            echo "$PAGE_1_TOKEN" | base64 -d > tokens/page_1_token.json
+          fi
           printf "DISCORD_WEBHOOK_URL=%s\nLOG_LEVEL=INFO\n" "$DISCORD_WEBHOOK_URL" > .env
           if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
             echo "DRY_RUN=true" >> .env
+          fi
+
+      - name: Write TikTok cookies
+        env:
+          TIKTOK_COOKIES: ${{ secrets.TIKTOK_COOKIES }}
+        run: |
+          if [ -n "$TIKTOK_COOKIES" ]; then
+            echo "$TIKTOK_COOKIES" | base64 -d > /tmp/tiktok_cookies.txt
+            echo "TIKTOK_COOKIES_FILE=/tmp/tiktok_cookies.txt" >> $GITHUB_ENV
           fi
 
       - name: Run slot 2
@@ -82,6 +95,7 @@ jobs:
             exit 0
           fi
           cp data/automation.db /tmp/automation_new.db
+          git checkout -- data/automation.db
           git fetch origin main
           git checkout -B main origin/main
           cp /tmp/automation_new.db data/automation.db
