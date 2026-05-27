@@ -88,7 +88,7 @@ def run_channel(channel: Dict[str, Any], slot: int, dry_run: bool = False) -> Di
         page_token = token_data["page_access_token"]
 
         # Pick one video to upload this slot
-        video = _pick_next_video(channel)
+        video = _pick_next_video(channel, slot)
         if video is None:
             logger.info("[%s] No unposted videos available for slot %d", channel_id, slot)
             db.finish_run(run_id, "no_content")
@@ -100,7 +100,7 @@ def run_channel(channel: Dict[str, Any], slot: int, dry_run: bool = False) -> Di
         # Download
         local_file = _download_with_retry(channel, video, dry_run)
         if local_file is None:
-            _handle_failure(channel, video, "Download failed after retries")
+            _handle_download_failure(channel, video, "Download failed after retries")
             db.finish_run(run_id, "failed", error_message="Download failed")
             result["status"] = "failed"
             result["error"] = "Download failed"
@@ -131,7 +131,6 @@ def run_channel(channel: Dict[str, Any], slot: int, dry_run: bool = False) -> Di
                 db.mark_uploaded(channel_id, video["id"], fb_video_id)
                 db.finish_run(run_id, "success", videos_uploaded=1)
             else:
-                # Dry run: do NOT write to DB so real runs aren't blocked
                 db.finish_run(run_id, "dry_run", videos_uploaded=0)
                 logger.info("[%s] [DRY RUN] Would have uploaded: https://www.facebook.com/video/%s", channel_id, fb_video_id)
             cleanup_download(local_file)
@@ -139,9 +138,9 @@ def run_channel(channel: Dict[str, Any], slot: int, dry_run: bool = False) -> Di
             result["video_uploaded"] = title
             result["fb_url"] = f"https://www.facebook.com/video/{fb_video_id}"
             if not dry_run:
-                logger.info("[%s] ✓ Uploaded: %s", channel_id, result["fb_url"])
+                logger.info("[%s] Uploaded: %s", channel_id, result["fb_url"])
         else:
-            _handle_failure(channel, video, "Upload returned no video ID")
+            _handle_upload_failure(channel, video, "Upload returned no video ID")
             db.finish_run(run_id, "failed", error_message="Upload failed")
             result["status"] = "failed"
             result["error"] = "Upload returned no video ID"
@@ -165,11 +164,29 @@ def run_channel(channel: Dict[str, Any], slot: int, dry_run: bool = False) -> Di
 
 # ── Video selection ───────────────────────────────────────────────────────────
 
-def _pick_next_video(channel: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+def _pick_next_video(channel: Dict[str, Any], slot: int) -> Optional[Dict[str, Any]]:
+    """
+    Priority order:
+      1. Videos in pending_retry state that are due today (retries take priority)
+      2. New unposted videos, sorted newest-first
+
+    Supports two optional channel config keys:
+      min_upload_date       YYYY-MM-DD — ignore TikTok videos older than this date.
+      min_backlog_for_slot1 int — slot 1 is skipped unless at least this many
+                            unuploaded eligible videos exist. When the backlog drops
+                            below this threshold the channel automatically falls back
+                            to 1 upload/day (slot 2 only).
+    """
     channel_id = channel["id"]
     today = date.today()
 
+    # Resolve optional date filter -> Unix timestamp
+    min_ts = _parse_min_upload_date(channel.get("min_upload_date"))
+
+    # Check for pending retries first (apply date filter if configured)
     retries = db.get_videos_for_retry(channel_id, today)
+    if min_ts is not None:
+        retries = [r for r in retries if (r.get("tiktok_timestamp") or 0) >= min_ts]
     if retries:
         logger.info("[%s] Found %d video(s) due for retry", channel_id, len(retries))
         return {
@@ -179,6 +196,7 @@ def _pick_next_video(channel: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             "timestamp": retries[0]["tiktok_timestamp"],
         }
 
+    # Fetch fresh profile and find newest unposted
     videos = get_profile_videos(channel["tiktok_username"])
     if videos is None:
         raise TikTokUnreachableError(
@@ -187,14 +205,50 @@ def _pick_next_video(channel: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     if not videos:
         return None
 
-    already_posted = db.get_posted_video_ids(channel_id)
+    # Apply upload-date filter
+    if min_ts is not None:
+        before = len(videos)
+        videos = [v for v in videos if (v.get("timestamp") or 0) >= min_ts]
+        filtered = before - len(videos)
+        if filtered:
+            logger.info(
+                "[%s] Filtered %d video(s) older than min_upload_date (%s)",
+                channel_id, filtered, channel["min_upload_date"],
+            )
 
-    for video in videos:
-        if video["id"] not in already_posted:
-            db.record_video_seen(channel_id, video)
-            return video
+    already_posted = db.get_posted_video_ids(channel_id)
+    eligible = [v for v in videos if v["id"] not in already_posted]
+
+    # Slot throttle: skip slot 1 when backlog is too small so the remaining
+    # video(s) are preserved for slot 2.
+    min_backlog = channel.get("min_backlog_for_slot1")
+    if slot == 1 and min_backlog is not None and len(eligible) < int(min_backlog):
+        logger.info(
+            "[%s] Slot 1 throttled — %d eligible video(s) available, "
+            "need %d (min_backlog_for_slot1). Reserving for slot 2.",
+            channel_id, len(eligible), int(min_backlog),
+        )
+        return None
+
+    for video in eligible:
+        db.record_video_seen(channel_id, video)
+        return video
 
     return None
+
+
+def _parse_min_upload_date(min_date_str: Optional[str]) -> Optional[int]:
+    """Convert 'YYYY-MM-DD' string to a Unix timestamp int, or None if not set."""
+    if not min_date_str:
+        return None
+    try:
+        return int(datetime.strptime(min_date_str, "%Y-%m-%d").timestamp())
+    except ValueError:
+        logger.warning(
+            "Invalid min_upload_date %r — expected YYYY-MM-DD format, ignoring filter",
+            min_date_str,
+        )
+        return None
 
 
 # ── Download ──────────────────────────────────────────────────────────────────
@@ -213,7 +267,22 @@ def _download_with_retry(channel: Dict[str, Any], video: Dict[str, Any],
     )
 
 
-def _handle_failure(channel: Dict[str, Any], video: Dict[str, Any], error_msg: str) -> None:
+def _handle_download_failure(channel: Dict[str, Any], video: Dict[str, Any],
+                              error_msg: str) -> None:
+    today = date.today()
+    db.mark_retry(
+        channel_id=channel["id"],
+        tiktok_video_id=video["id"],
+        error_message=error_msg,
+        next_retry_date=today + timedelta(days=1),
+        max_retries=channel.get("max_retry_days", 3),
+    )
+    logger.warning("[%s] Video %s queued for retry tomorrow: %s",
+                   channel["id"], video["id"], error_msg)
+
+
+def _handle_upload_failure(channel: Dict[str, Any], video: Dict[str, Any],
+                            error_msg: str) -> None:
     today = date.today()
     db.mark_retry(
         channel_id=channel["id"],
