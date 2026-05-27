@@ -51,7 +51,7 @@ def send_daily_summary(
 
     emoji = "✅" if not failed_rows else "⚠️"
     lines = [
-        f"{emoji} **Daily Upload Summary** ({date.today()})",
+        f"{emoji} **TikTok→Facebook Daily Summary** ({date.today()})",
         f"Uploaded: {len(success_rows)} | Failed: {len(failed_rows)} | No content: {len(no_content_rows)}",
     ]
 
