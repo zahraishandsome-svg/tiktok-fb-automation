@@ -28,14 +28,14 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Restore DB cache
+      - name: Restore DB cache (page_1)
         uses: actions/cache@v4
         with:
-          path: data/automation.db
-          key: fb-automation-db-${{ github.sha }}-${{ github.run_id }}
+          path: data/page_1.db
+          key: fb-automation-db-page_1-${{ github.sha }}-${{ github.run_id }}
           restore-keys: |
-            fb-automation-db-${{ github.sha }}-
-            fb-automation-db-
+            fb-automation-db-page_1-${{ github.sha }}-
+            fb-automation-db-page_1-
 
       - name: Write .env
         env:

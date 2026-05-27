@@ -1,8 +1,8 @@
-name: Upload Slot 1 (8PM PKT)
+name: Upload Slot 2 Page 1 (10PM PKT)
 
 on:
   schedule:
-    - cron: "0 14 * * *"   # 14:00 UTC = 7:00 PM PKT — uploads 1h early, video scheduled to go PUBLIC at 15:00 UTC (8:00 PM PKT)
+    - cron: "0 16 * * *"   # 16:00 UTC = 9:00 PM PKT — uploads 1h early, video scheduled to go PUBLIC at 17:00 UTC (10:00 PM PKT)
   workflow_dispatch:
     inputs:
       channel:
@@ -14,9 +14,8 @@ on:
         type: boolean
         default: false
 
-concurrency:
-  group: fb-uploads
-  cancel-in-progress: false
+env:
+  DB_PAGE_ID: page_1
 
 jobs:
   upload:
@@ -39,11 +38,11 @@ jobs:
       - name: Restore DB cache
         uses: actions/cache@v4
         with:
-          path: data/automation.db
-          key: fb-automation-db-${{ github.sha }}-${{ github.run_id }}
+          path: data/page_1.db
+          key: fb-automation-db-page_1-${{ github.sha }}-${{ github.run_id }}
           restore-keys: |
-            fb-automation-db-${{ github.sha }}-
-            fb-automation-db-
+            fb-automation-db-page_1-${{ github.sha }}-
+            fb-automation-db-page_1-
 
       - name: Restore credentials and tokens
         env:
@@ -72,38 +71,32 @@ jobs:
             echo "TIKTOK_COOKIES_FILE=/tmp/tiktok_cookies.txt" >> $GITHUB_ENV
           fi
 
-      - name: Run slot 1
-        run: |
-          CHANNEL_ARG=""
-          if [ -n "${{ github.event.inputs.channel }}" ]; then
-            CHANNEL_ARG="--channel ${{ github.event.inputs.channel }}"
-          fi
-          python run.py --slot 1 $CHANNEL_ARG
+      - name: Run slot 2
+        run: python run.py --slot 2 --channel page_1
 
       - name: Save DB cache
         if: always()
         uses: actions/cache/save@v4
         with:
-          path: data/automation.db
-          key: fb-automation-db-${{ github.run_id }}
+          path: data/page_1.db
+          key: fb-automation-db-page_1-${{ github.run_id }}
 
       - name: Commit DB to repo
         if: always()
         run: |
-          if [ ! -f data/automation.db ]; then
+          if [ ! -f data/page_1.db ]; then
             echo "No DB file found — skipping commit"
             exit 0
           fi
-          cp data/automation.db /tmp/automation_new.db
-          git checkout -- data/automation.db
+          cp data/page_1.db /tmp/page_1_new.db
           git fetch origin main
           git checkout -B main origin/main
-          cp /tmp/automation_new.db data/automation.db
+          cp /tmp/page_1_new.db data/page_1.db
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add -f data/automation.db
+          git add -f data/page_1.db
           if ! git diff --staged --quiet; then
-            git commit -m "chore: update automation.db [skip ci]"
+            git commit -m "chore: update page_1.db [skip ci]"
             git push origin main
           else
             echo "No DB changes to commit"
@@ -113,6 +106,6 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: logs-slot1-${{ github.run_id }}
+          name: logs-slot2-page1-${{ github.run_id }}
           path: logs/
           retention-days: 14

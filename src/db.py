@@ -10,13 +10,24 @@ from typing import Optional, List, Dict, Any
 
 logger = logging.getLogger(__name__)
 
+import os
+import glob as _glob
+
 PROJECT_ROOT = Path(__file__).parent.parent
-DB_PATH = PROJECT_ROOT / "data" / "automation.db"
+
+def _get_db_path() -> Path:
+    page_id = os.environ.get("DB_PAGE_ID")
+    if page_id:
+        return PROJECT_ROOT / "data" / f"{page_id}.db"
+    return PROJECT_ROOT / "data" / "automation.db"
+
+DB_PATH = _get_db_path()
 
 
 def get_connection() -> sqlite3.Connection:
-    DB_PATH.parent.mkdir(exist_ok=True)
-    conn = sqlite3.connect(str(DB_PATH))
+    db_path = _get_db_path()
+    db_path.parent.mkdir(exist_ok=True)
+    conn = sqlite3.connect(str(db_path))
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
@@ -72,7 +83,7 @@ def init_db() -> None:
                 ON runs (channel_id, run_date);
         """)
     conn.close()
-    logger.debug("Database initialised at %s", DB_PATH)
+    logger.debug("Database initialised at %s", _get_db_path())
 
 
 # ── Channel registry ──────────────────────────────────────────────────────────
@@ -234,8 +245,18 @@ def count_uploads_today(channel_id: str) -> int:
 
 
 def get_todays_run_summary() -> List[Dict]:
-    conn = get_connection()
-    rows = conn.execute("""
+    page_id = os.environ.get("DB_PAGE_ID")
+    if page_id:
+        # Single-page mode: query only this page's DB
+        db_paths = [_get_db_path()]
+    else:
+        # Summary mode: glob all page_*.db files
+        db_paths = [Path(p) for p in _glob.glob(str(PROJECT_ROOT / "data" / "page_*.db"))]
+        if not db_paths:
+            db_paths = [PROJECT_ROOT / "data" / "automation.db"]
+
+    all_rows: List[Dict] = []
+    query = """
         SELECT r.channel_id, r.slot, r.status, r.videos_uploaded, r.error_message,
                p.fb_video_id, p.tiktok_title
         FROM runs r
@@ -245,9 +266,16 @@ def get_todays_run_summary() -> List[Dict]:
             AND date(p.posted_at) = date('now')
         WHERE r.run_date = date('now')
         ORDER BY r.channel_id, r.slot
-    """).fetchall()
-    conn.close()
-    return [dict(row) for row in rows]
+    """
+    for db_path in db_paths:
+        if not db_path.exists():
+            continue
+        conn = sqlite3.connect(str(db_path))
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(query).fetchall()
+        conn.close()
+        all_rows.extend([dict(row) for row in rows])
+    return all_rows
 
 
 def slot_already_ran(channel_id: str, slot: int) -> bool:
