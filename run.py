@@ -50,8 +50,8 @@ def main() -> None:
         epilog=__doc__,
     )
     parser.add_argument(
-        "--slot", type=int, choices=[1, 2], required=True,
-        help="Upload slot: 1=8 PM PKT (15:00 UTC), 2=1 AM PKT (20:00 UTC)",
+        "--slot", type=int, choices=[1, 2], default=None,
+        help="Upload slot: 1=8 PM PKT (15:00 UTC), 2=10 PM PKT (17:00 UTC)",
     )
     parser.add_argument(
         "--channel", type=str, default=None, metavar="CHANNEL_ID",
@@ -62,16 +62,26 @@ def main() -> None:
         help="Run full pipeline but skip the actual Facebook upload.",
     )
     parser.add_argument(
+        "--summary-only", action="store_true",
+        help="Skip uploads — just send the Discord daily summary and exit.",
+    )
+    parser.add_argument(
         "--log-level", type=str, default="INFO",
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
     )
     args = parser.parse_args()
 
+    if not args.summary_only and args.slot is None:
+        parser.error("--slot is required unless --summary-only is set")
+
     log_file = setup_logging(args.log_level)
     logger = logging.getLogger("run")
 
     logger.info("=" * 60)
-    logger.info("TikTok→Facebook Automation | Slot %d | dry_run=%s", args.slot, args.dry_run)
+    if args.summary_only:
+        logger.info("TikTok→Facebook Automation | Summary Only")
+    else:
+        logger.info("TikTok→Facebook Automation | Slot %d | dry_run=%s", args.slot, args.dry_run)
     logger.info("=" * 60)
 
     init_db()
@@ -81,6 +91,26 @@ def main() -> None:
     except (FileNotFoundError, ValueError) as exc:
         logger.error("Config error: %s", exc)
         sys.exit(1)
+
+    # --summary-only: just send the Discord daily summary and exit
+    if args.summary_only:
+        from src.db import get_todays_run_summary
+        from src.notifier import send_daily_summary
+        webhook_url = config.get("discord_webhook_url", "")
+        if not webhook_url:
+            logger.error("No DISCORD_WEBHOOK_URL configured — cannot send summary")
+            sys.exit(1)
+        channel_names = {
+            ch["id"]: ch.get("facebook_page_name", "")
+            for ch in config.get("channels", [])
+        }
+        send_daily_summary(
+            webhook_url=webhook_url,
+            db_rows=get_todays_run_summary(),
+            channel_names=channel_names,
+        )
+        logger.info("Daily summary sent. Log saved to: %s", log_file)
+        sys.exit(0)
 
     effective_dry_run = args.dry_run or config.get("dry_run", False)
     if effective_dry_run and not args.dry_run:

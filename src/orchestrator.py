@@ -81,16 +81,7 @@ def run_all_channels(
             send_failure_alert(webhook_url=webhook_url, failures=failures, slot=slot)
         if token_warnings:
             send_token_warning(webhook_url=webhook_url, warnings=token_warnings)
-        if slot == 2:
-            channel_names = {
-                ch["id"]: ch.get("facebook_page_name", "")
-                for ch in config.get("channels", [])
-            }
-            send_daily_summary(
-                webhook_url=webhook_url,
-                db_rows=get_todays_run_summary(),
-                channel_names=channel_names,
-            )
+        # Daily summary is sent by the dedicated daily-summary.yml workflow at midnight PKT
 
     _log_summary(results)
     return results

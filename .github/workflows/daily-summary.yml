@@ -1,0 +1,55 @@
+name: Daily Summary (12 AM PKT)
+
+on:
+  schedule:
+    # 19:00 UTC = 00:00 PKT next day (Pakistan Standard Time = UTC+5)
+    - cron: "0 19 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: fb-uploads
+  cancel-in-progress: false
+
+jobs:
+  summary:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Restore DB cache
+        uses: actions/cache@v4
+        with:
+          path: data/automation.db
+          key: fb-automation-db-${{ github.sha }}-${{ github.run_id }}
+          restore-keys: |
+            fb-automation-db-${{ github.sha }}-
+            fb-automation-db-
+
+      - name: Write .env
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: |
+          printf "DISCORD_WEBHOOK_URL=%s\nLOG_LEVEL=INFO\n" "$DISCORD_WEBHOOK_URL" > .env
+
+      - name: Send daily summary
+        run: python run.py --summary-only
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs-daily-summary-${{ github.run_id }}
+          path: logs/
+          retention-days: 14
