@@ -321,49 +321,17 @@ def _handle_upload_failure(channel: Dict[str, Any], video: Dict[str, Any],
 def _get_scheduled_publish_time(channel: Dict[str, Any], slot: int,
                                  channel_id: str) -> Optional[int]:
     """
-    Calculate the UTC Unix timestamp at which this slot's video should go live.
-    Reads slot_publish_times_utc from channel config (e.g. {1: "15:00", 2: "17:00"}).
-    Returns a Unix timestamp when the target time is more than 15 minutes in the future.
-    Returns None if no publish time is configured or target is too close/past (immediate publish).
-    Facebook requires scheduled_publish_time to be at least 10 minutes in the future.
+    Always returns None — publish immediately on upload.
+
+    FB's scheduled Reels API silently fails to auto-publish, leaving videos
+    stuck in 'scheduled' state forever with no error. Since cron-job.org fires
+    at exact times (not hours late like GitHub's own cron), we no longer need
+    pre-scheduling. Cron fires AT the publish time → upload → publish immediately
+    → video live within ~10 min of target. Reliable at any scale.
+
+    slot_publish_times_utc in channels.yaml is kept as documentation only.
     """
-    times = channel.get("slot_publish_times_utc") or {}
-    time_str = times.get(slot) or times.get(str(slot))
-    if not time_str:
-        return None
-
-    try:
-        h, m = map(int, str(time_str).split(":"))
-    except (ValueError, AttributeError):
-        logger.warning("[%s] Invalid slot_publish_times_utc value: %r", channel_id, time_str)
-        return None
-
-    now_utc = datetime.now(timezone.utc)
-    target = now_utc.replace(hour=h, minute=m, second=0, microsecond=0)
-    delta_seconds = (target - now_utc).total_seconds()
-
-    if delta_seconds < 0:
-        # Target already passed today (cron ran late) — publish immediately.
-        logger.info(
-            "[%s] Slot %d: %02d:%02dZ already passed today (cron delay) — publishing immediately",
-            channel_id, slot, h, m,
-        )
-        return None
-
-    if delta_seconds < 900:
-        # Less than 15 min away — too close for FB scheduled publish (minimum 10 min)
-        logger.info(
-            "[%s] Slot %d target %02d:%02dZ is too close (%.0f s) — publishing immediately",
-            channel_id, slot, h, m, delta_seconds,
-        )
-        return None
-
-    ts = int(target.timestamp())
-    logger.info(
-        "[%s] Slot %d scheduling publish at %s (%d min from now)",
-        channel_id, slot, target.strftime("%Y-%m-%dT%H:%M:%SZ"), int(delta_seconds / 60),
-    )
-    return ts
+    return None
 
 
 # ── Description ───────────────────────────────────────────────────────────────
