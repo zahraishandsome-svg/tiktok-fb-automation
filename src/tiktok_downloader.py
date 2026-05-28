@@ -1,6 +1,6 @@
 """
 TikTok scraping and downloading via yt-dlp.
-Watermark removal is handled by preferring the 'download_addr' format over 'play_addr'.
+Watermark removal is handled by preferring the 'play_addr' format over 'download_addr'.
 Never raises — returns None on failure so channel_runner can decide retry logic.
 """
 
@@ -14,8 +14,24 @@ import yt_dlp
 
 logger = logging.getLogger(__name__)
 
+# Format selector that picks the clean (non-watermarked) stream.
+#
+# yt-dlp TikTok extractor exposes two format families:
+#   format_id^=play     → play_addr / play_addr_h264 / play_addr_bytevc1 / play
+#                          These are the raw stream URLs — NO watermark.
+#   format_id^=download → download_addr / download
+#                          These are TikTok's "Save Video" URLs — explicitly
+#                          labeled 'watermarked' in yt-dlp (format_note='watermarked',
+#                          preference=-2). NEVER use this selector.
+#
+# Fix applied 2026-05-28: was incorrectly using format_id^=download (watermarked).
+# Now always prefers format_id^=play (clean raw stream).
 _WATERMARK_FREE_FORMAT = (
-    "bestvideo[format_id^=download][ext=mp4]+bestaudio/bestvideo[ext=mp4]+bestaudio/best"
+    "bestvideo[format_id^=play][ext=mp4]+bestaudio"
+    "/best[format_id^=play][ext=mp4]"
+    "/best[format_id^=play]"
+    "/best[ext=mp4]"
+    "/best"
 )
 
 _FETCH_RETRIES = 3
